@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:async';
 import 'dart:convert';
 
 class XunitFailure {
@@ -33,8 +32,6 @@ class XunitTestResult {
       this.groupIDs);
 }
 
-class FinalGroup {}
-
 class XunitTestGroup {
   int errored = 0;
   int failed = 0;
@@ -58,100 +55,138 @@ class XunitTestGroup {
   }
 }
 
-Map currentLocal(Map<int, XunitTestGroup> thing, position) {}
+Map testing = {};
+Map<int, XunitTestGroup> groupMap = {};
+
+handleGroup(Map outputLine) {
+  var groupReference = outputLine["group"];
+  if (outputLine["group"]["name"] != null) {
+    groupMap[groupReference['id']] = groupReference["name"];
+    String placeHolderName = groupReference["name"];
+    placeHolderName = placeHolderName
+        .substring(placeHolderName
+                .indexOf(groupMap[outputLine['group']['parentID']].name) +
+            groupMap[outputLine['group']['parentID']].name.length)
+        .trimLeft();
+
+    groupMap[groupReference['id']] = new XunitTestGroup(
+        groupReference['id'], placeHolderName, groupReference['parentID']);
+  }
+  if (groupReference["name"] == null) {
+    groupMap[groupReference['id']] =
+        new XunitTestGroup(groupReference['id'], '', -1);
+  }
+}
+
+handleTest(Map outputLine) {
+  if (!outputLine["test"]["name"].contains('loading')) {
+    groupMap[-1].tests++;
+    String placeHolderName = outputLine["test"]["name"];
+    placeHolderName = placeHolderName
+        .substring(placeHolderName
+                .indexOf(groupMap[outputLine["test"]["groupIDs"].last].name) +
+            groupMap[outputLine["test"]["groupIDs"].last].name.length)
+        .trimLeft();
+    XunitTestResult testResult = new XunitTestResult(
+        placeHolderName,
+        outputLine['time'],
+        outputLine["test"]['metadata']['skip'],
+        outputLine["test"]['metadata']['skipReason'],
+        outputLine["test"]['groupIDs']);
+    testing[outputLine['test']['id']] = testResult;
+    groupMap[outputLine["test"]['groupIDs'].last].add(testResult);
+    if (testResult.skipped) {
+      for (var i = 0; i < testResult.groupIDs.length; i++) {
+        groupMap[testResult.groupIDs[i]].skipped++;
+      }
+      groupMap[-1].skipped++;
+    }
+  }
+}
+
+handleFailure() {}
+
+handleTestId(Map outputLine) {
+  if (testing.containsKey(outputLine["testID"])) {
+    if (outputLine['type'] == 'testDone' && outputLine["result"] == "success") {
+      XunitTestResult currentTest = testing[outputLine["testID"]];
+      currentTest.endTime = outputLine['time'];
+      for (var i = 0; i < currentTest.groupIDs.length; i++) {
+        groupMap[currentTest.groupIDs[i]].tests++;
+      }
+    } else if (outputLine['type'] == 'testDone' &&
+        outputLine["result"] == "failure") {
+      XunitTestResult currentTest = testing[outputLine["testID"]];
+      if (currentTest.error == null) {
+        currentTest.error = new XunitFailureResult();
+        currentTest.error.failure = true;
+      }
+      currentTest.endTime = outputLine['time'];
+      for (var i = 1; i < currentTest.groupIDs.length; i++) {
+        groupMap[currentTest.groupIDs[i]].failed++;
+      }
+      groupMap[-1].failed++;
+    } else if (outputLine['type'] == 'testDone' &&
+        outputLine["result"] == "error") {
+      XunitTestResult currentTest = testing[outputLine["testID"]];
+      if (currentTest.error == null) {
+        currentTest.error = new XunitFailureResult();
+        currentTest.error.failure = false;
+      }
+      currentTest.endTime = outputLine['time'];
+      for (var i = 1; i < currentTest.groupIDs.length; i++) {
+        groupMap[currentTest.groupIDs[i]].errored++;
+      }
+      groupMap[-1].errored++;
+    } else if (outputLine['type'] == 'error' &&
+        outputLine['isFailure'] == true) {
+      XunitTestResult currentTest = testing[outputLine["testID"]];
+      if (currentTest.error == null) {
+        currentTest.error = new XunitFailureResult();
+        currentTest.error.failure = true;
+      }
+      currentTest.error.failures.add(new XunitFailure(
+          outputLine['error'].replaceAll('\n', ''),
+          outputLine['stackTrace'].trimRight()));
+    } else if (outputLine['type'] == 'error' &&
+        outputLine['isFailure'] == false) {
+      XunitTestResult currentTest = testing[outputLine["testID"]];
+      if (currentTest.error == null) {
+        currentTest.error = new XunitFailureResult();
+        currentTest.error.failure = false;
+      }
+      currentTest.error.failures.add(new XunitFailure(
+          outputLine['error'].replaceAll('\n', ''),
+          outputLine['stackTrace'].trimRight()));
+    }
+  }
+}
 
 main() async {
-  Map testing = {};
-
-  Map<int, XunitTestGroup> groupMap = {};
   groupMap[-1] = new XunitTestGroup(-1, '', null);
 
   Process thing = await Process.start(
-      'pub', ['run', 'test', 'test/', '--reporter', 'json']);
+      'pub', ['run', 'test', 'test/action_test.dart', '--reporter', 'json']);
 
   thing.stdout.transform(UTF8.decoder).listen((String thingy1) {
-    List<String> bamy = thingy1.split('\n');
-    bamy.forEach((line) {
+    List<String> output = thingy1.split('\n');
+    output.forEach((line) {
       if (line.isNotEmpty) {
         print(line);
         Map outputLine = JSON.decode(line);
-        if (outputLine["group"] != null &&
-            outputLine["group"]["name"] != null) {
-          groupMap[outputLine["group"]['id']] = outputLine["group"]["name"];
-          String placeHolderName = outputLine["group"]["name"];
-          if (outputLine['group']['parentID'] >= 1) {
-            placeHolderName = placeHolderName
-                .substring(placeHolderName.indexOf(
-                        groupMap[outputLine['group']['parentID']].name) +
-                    groupMap[outputLine['group']['parentID']].name.length)
-                .trimLeft();
-            currentLocal(groupMap, outputLine['group']['parentID']);
-          }
-          groupMap[outputLine["group"]['id']] = new XunitTestGroup(
-              outputLine["group"]['id'],
-              placeHolderName,
-              outputLine["group"]['parentID']);
+        if (outputLine["group"] != null) {
+          handleGroup(outputLine);
         }
-        ;
-        if (outputLine["group"] != null &&
-            outputLine["group"]["name"] == null) {
-          groupMap[outputLine["group"]['id']] =
-              new XunitTestGroup(outputLine["group"]['id'], '', -1);
+        if (outputLine["test"] != null) {
+          handleTest(outputLine);
         }
-        ;
-        if (outputLine["test"] != null &&
-            !outputLine["test"]["name"].contains('loading')) {
-          String placeHolderName = outputLine["test"]["name"];
-          for (var i = 0; i < outputLine["test"]["groupIDs"].length; i++) {
-            placeHolderName = placeHolderName
-                .substring(
-                    groupMap[outputLine["test"]["groupIDs"][i]].name.length)
-                .trimLeft();
-          }
-          XunitTestResult testResult = new XunitTestResult(
-              placeHolderName,
-              outputLine['time'],
-              outputLine["test"]['metadata']['skip'],
-              outputLine["test"]['metadata']['skipReason'],
-              outputLine["test"]['groupIDs']);
-          testing[outputLine['test']['id']] = testResult;
-          groupMap[outputLine["test"]['groupIDs'].last].add(testResult);
-          if (testResult.skipped) {
-            for (var i = 0; i < testResult.groupIDs.length; i++) {
-              groupMap[testResult.groupIDs[i]].skipped++;
-            }
-          }
+        if (outputLine["testID"] != null) {
+          handleTestId(outputLine);
         }
-        ;
-        if (outputLine["testID"] != null &&
-            testing.containsKey(outputLine["testID"])) {
-          if (outputLine['type'] == 'testDone' &&
-              outputLine["result"] == "success") {
-            XunitTestResult currentTest = testing[outputLine["testID"]];
-            currentTest.endTime = outputLine['time'];
-            for (var i = 0; i < currentTest.groupIDs.length; i++) {
-              groupMap[currentTest.groupIDs[i]].tests++;
-            }
-          } else if (outputLine['type'] == 'testDone' &&
-              outputLine["result"] == "failure") {
-            XunitTestResult currentTest = testing[outputLine["testID"]];
-            currentTest.endTime = outputLine['time'];
-            for (var i = 1; i < currentTest.groupIDs.length; i++) {
-              groupMap[currentTest.groupIDs[i]].failed++;
-            }
-          } else if (outputLine['type'] == 'testDone' &&
-              outputLine["result"] == "error") {
-            XunitTestResult currentTest = testing[outputLine["testID"]];
-            currentTest.endTime = outputLine['time'];
-            for (var i = 1; i < currentTest.groupIDs.length; i++) {
-              groupMap[currentTest.groupIDs[i]].errored++;
-            }
-          }
-        }
-        ;
       }
     });
   });
+
   await thing.exitCode;
   groupMap.forEach((key, XunitTestGroup value) {
     if (value.parentID != null) {
@@ -166,8 +201,6 @@ main() async {
   List theList = groupMap.keys.toList();
   theList.sort();
 
-  print(groupMap[-1].testSuites);
-
   Map attempting = {};
 
   groupMap[-1].testSuites.forEach((key, value) {
@@ -178,18 +211,15 @@ main() async {
 
   groupMap[-1].testSuites = attempting;
 
-//  groupMap.forEach((key,value){
-//    print('key '+ key.toString());
-//    print('parentID ' + value.name);
-//
-//  });
-
   print('<testsuite name="All tests" tests="${groupMap.values.first.tests}" '
       'errors="${groupMap.values.first.errored}" failures="${groupMap.values.first.failed}" skipped="${groupMap.values.first.skipped}">');
   print(_formatTestResults(groupMap[theList[0]].testResults, depth: 1)
       .trimRight());
-  print(_formatXmlHierarchy(groupMap[theList[0]]).trimRight());
-  print('</testsuite>');
+  String heirarchy = _formatXmlHierarchy(groupMap[theList[0]]).trimRight();
+  if (heirarchy != '') {
+    print(heirarchy);
+  }
+  print('</testsuite>'.trimLeft());
 }
 
 String _formatXmlHierarchy(XunitTestGroup xmlMap, {int depth: 1}) {
@@ -228,7 +258,7 @@ String _formatTestResults(List list, {int depth}) {
   list.forEach((XunitTestResult test) {
     String individualTest = '';
     String testName = _sanitizeXml(test.name);
-    if (!test.skipped) {
+    if (test.error == null && !test.skipped) {
       individualTest += _indentLine(
           '<testcase name=\"${testName}\" time=\"${test.endTime - test.beginningTime}\"> </testcase>',
           depth);
