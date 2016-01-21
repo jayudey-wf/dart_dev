@@ -64,11 +64,10 @@ main() async {
   Map testing = {};
 
   Map<int, XunitTestGroup> groupMap = {};
-  groupMap[1] = new XunitTestGroup(0, 'root', 0);
-
+  groupMap[-1] = new XunitTestGroup(-1, '', null);
 
   Process thing = await Process.start(
-      'pub', ['run', 'test', 'test/action_test.dart', '--reporter', 'json']);
+      'pub', ['run', 'test', 'test/', '--reporter', 'json']);
 
   thing.stdout.transform(UTF8.decoder).listen((String thingy1) {
     List<String> bamy = thingy1.split('\n');
@@ -80,7 +79,7 @@ main() async {
             outputLine["group"]["name"] != null) {
           groupMap[outputLine["group"]['id']] = outputLine["group"]["name"];
           String placeHolderName = outputLine["group"]["name"];
-          if (outputLine['group']['parentID'] > 1) {
+          if (outputLine['group']['parentID'] >= 1) {
             placeHolderName = placeHolderName
                 .substring(placeHolderName.indexOf(
                         groupMap[outputLine['group']['parentID']].name) +
@@ -94,10 +93,16 @@ main() async {
               outputLine["group"]['parentID']);
         }
         ;
+        if (outputLine["group"] != null &&
+            outputLine["group"]["name"] == null) {
+          groupMap[outputLine["group"]['id']] =
+              new XunitTestGroup(outputLine["group"]['id'], '', -1);
+        }
+        ;
         if (outputLine["test"] != null &&
             !outputLine["test"]["name"].contains('loading')) {
           String placeHolderName = outputLine["test"]["name"];
-          for (var i = 1; i < outputLine["test"]["groupIDs"].length; i++) {
+          for (var i = 0; i < outputLine["test"]["groupIDs"].length; i++) {
             placeHolderName = placeHolderName
                 .substring(
                     groupMap[outputLine["test"]["groupIDs"][i]].name.length)
@@ -111,8 +116,8 @@ main() async {
               outputLine["test"]['groupIDs']);
           testing[outputLine['test']['id']] = testResult;
           groupMap[outputLine["test"]['groupIDs'].last].add(testResult);
-          if(testResult.skipped) {
-            for (var i = 1; i < testResult.groupIDs.length; i++) {
+          if (testResult.skipped) {
+            for (var i = 0; i < testResult.groupIDs.length; i++) {
               groupMap[testResult.groupIDs[i]].skipped++;
             }
           }
@@ -124,7 +129,7 @@ main() async {
               outputLine["result"] == "success") {
             XunitTestResult currentTest = testing[outputLine["testID"]];
             currentTest.endTime = outputLine['time'];
-            for (var i = 1; i < currentTest.groupIDs.length; i++) {
+            for (var i = 0; i < currentTest.groupIDs.length; i++) {
               groupMap[currentTest.groupIDs[i]].tests++;
             }
           } else if (outputLine['type'] == 'testDone' &&
@@ -149,18 +154,29 @@ main() async {
   });
   await thing.exitCode;
   groupMap.forEach((key, XunitTestGroup value) {
-    if (value.parentID > 1){
+    if (value.parentID != null) {
       groupMap[value.parentID].testSuites[value.id] = value;
+    }
+    if (value.parentID == -1) {
+      groupMap[-1].testResults.addAll(value.testResults);
+      value.testResults = [];
     }
   });
 
-  //this adds the root node so it is working as expected
-  groupMap[1].testSuites[0] = groupMap[3];
+  List theList = groupMap.keys.toList();
+  theList.sort();
+
+//  groupMap.forEach((key,value){
+//    print('key '+ key.toString());
+//    print('parentID ' + value.name);
+//
+//  });
 
   print('<testsuite name="All tests" tests="${groupMap.values.first.tests}" '
       'errors="${groupMap.values.first.errored}" failures="${groupMap.values.first.failed}" skipped="${groupMap.values.first.skipped}">');
-  print(_formatTestResults(groupMap[1].testResults, depth:1).trimRight());
-  print(_formatXmlHierarchy(groupMap[1]).trimRight());
+  print(_formatTestResults(groupMap[theList[0]].testResults, depth: 1)
+      .trimRight());
+  print(_formatXmlHierarchy(groupMap[theList[0]]).trimRight());
   print('</testsuite>');
 }
 
@@ -171,19 +187,20 @@ String _formatXmlHierarchy(XunitTestGroup xmlMap, {int depth: 1}) {
       var heading = '';
 
       if (xmlMap.testSuites[elem].tests > 0) {
-          heading += 'tests="${xmlMap.testSuites[elem].tests}" ';
-    }
-    if (xmlMap.testSuites[elem].failed > 0) {
-      heading += 'failures="${xmlMap.testSuites[elem].failed}" ';
-    }
-    if (xmlMap.testSuites[elem].errored > 0) {
-      heading += 'errors="${xmlMap.testSuites[elem].errored}" ';
-    }
-    if (xmlMap.testSuites[elem].skipped > 0) {
-      heading += 'skipped="${xmlMap.testSuites[elem].skipped}" ';
-    }
-    heading = heading.trimRight();
-      result += _indentLine('<testsuite name="${xmlMap.testSuites[elem].name}" $heading>', depth);
+        heading += 'tests="${xmlMap.testSuites[elem].tests}" ';
+      }
+      if (xmlMap.testSuites[elem].failed > 0) {
+        heading += 'failures="${xmlMap.testSuites[elem].failed}" ';
+      }
+      if (xmlMap.testSuites[elem].errored > 0) {
+        heading += 'errors="${xmlMap.testSuites[elem].errored}" ';
+      }
+      if (xmlMap.testSuites[elem].skipped > 0) {
+        heading += 'skipped="${xmlMap.testSuites[elem].skipped}" ';
+      }
+      heading = heading.trimRight();
+      result += _indentLine(
+          '<testsuite name="${xmlMap.testSuites[elem].name}" $heading>', depth);
       result += _formatTestResults(xmlMap.testSuites[elem].testResults,
           depth: depth + 1);
       result += _formatXmlHierarchy(xmlMap.testSuites[elem], depth: depth + 1);
@@ -243,7 +260,6 @@ String _formatTestResults(List list, {int depth}) {
   });
   return results;
 }
-
 
 /// Indents a line by [depth] number of soft-tabs (2 space tabs). Also adds
 /// a newline at the end of the line.
