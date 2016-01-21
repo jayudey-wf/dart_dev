@@ -166,6 +166,18 @@ main() async {
   List theList = groupMap.keys.toList();
   theList.sort();
 
+  print(groupMap[-1].testSuites);
+
+  Map attempting = {};
+
+  groupMap[-1].testSuites.forEach((key, value) {
+    value.testSuites.forEach((key, value) {
+      attempting[key] = value;
+    });
+  });
+
+  groupMap[-1].testSuites = attempting;
+
 //  groupMap.forEach((key,value){
 //    print('key '+ key.toString());
 //    print('parentID ' + value.name);
